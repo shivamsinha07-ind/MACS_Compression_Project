@@ -1,52 +1,57 @@
-function validateFile(file, typeCheckFn = null, typeErrorMsg = "Invalid file type") {
+export async function compressPNG(file) {
   if (!file || file.size === 0) {
     throw new Error("File is empty or missing.");
   }
 
-  const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
-  if (file.size > MAX_SIZE) {
-    throw new Error("File exceeds the 50 MB size limit.");
+  if (!file.type.includes("png")) {
+    throw new Error("Only PNG files supported.");
   }
 
-  if (typeCheckFn && !typeCheckFn(file)) {
-    throw new Error(typeErrorMsg);
-  }
-}
-
-function buildResult(originalFile, compressedBlob, algorithm) {
-  const originalSize = originalFile.size;
-  const compressedSize = compressedBlob.size;
-
-  return {
-    compressedBlob,
-    originalSize,
-    compressedSize,
-    algorithm,
-    noGain: compressedSize >= originalSize,
-  };
-}
-
-export async function compressText(file) {
-  validateFile(
-    file,
-    (f) =>
-      f.name.endsWith(".txt") ||
-      f.name.endsWith(".csv") ||
-      f.type === "text/plain" ||
-      f.type === "text/csv",
-    "Only .txt and .csv files are supported for text compression."
-  );
-
-  const arrayBuffer = await file.arrayBuffer();
-  const u8Input = new Uint8Array(arrayBuffer);
-
-  const compressedU8 = await new Promise((resolve, reject) => {
-    fflate.gzip(u8Input, { level: 9 }, (err, data) => {
-      if (err) reject(new Error("fflate compression failed: " + err.message));
-      else resolve(data);
-    });
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = async function(e) {
+      try {
+        const originalData = new Uint8Array(e.target.result);
+        const originalSize = originalData.length;
+        
+        const png = UPNG.decode(originalData);
+        const compressedData = UPNG.encode(png.frames, png.width, png.height, 3, png.colors);
+        const compressedSize = compressedData.length;
+        const compressionRatio = (originalSize / compressedSize).toFixed(2);
+        const spaceSavings = (((originalSize - compressedSize) / originalSize) * 100).toFixed(2);
+        
+        const compressedBlob = new Blob([compressedData], { type: 'image/png' });
+        
+        resolve({
+          compressedBlob,
+          originalSize,
+          compressedSize,
+          compressionRatio,
+          spaceSavings,
+          algorithm: "PNG Optimizer (UPNG.js)",
+          noGain: compressedSize >= originalSize
+        });
+      } catch (error) {
+        reject(new Error(`PNG compression failed: ${error.message}`));
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read PNG file'));
+    reader.readAsArrayBuffer(file);
   });
+}
 
-  const compressedBlob = new Blob([compressedU8], { type: "application/gzip" });
-  return buildResult(file, compressedBlob, "GZIP (fflate, level 9)");
+export async function decompressPNG(compressedFile) {
+  const arrayBuffer = await compressedFile.arrayBuffer();
+  const data = new Uint8Array(arrayBuffer);
+  
+  const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+  for (let i = 0; i < pngSignature.length; i++) {
+    if (data[i] !== pngSignature[i]) {
+      throw new Error('Invalid PNG data');
+    }
+  }
+  
+  return compressedFile;
 }
